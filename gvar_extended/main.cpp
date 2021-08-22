@@ -1,12 +1,21 @@
 #include "plugin.h"
 #include "logger.h"
 #include "settings.h"
+#include "resources.h"
 #include "modules/goes/gvar/module_gvar_image_decoder.h"
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <iomanip>
+
+#define FIXED_FLOAT(x) std::fixed << std::setprecision(3) << (x)
 
 class GVARExtended : public satdump::Plugin
 {
 private:
     static std::string misc_preview_text;
+    static std::vector<std::array<int, 3>> points;
+    static std::vector<std::string> names;
 
     static void satdumpStartedHandler(const satdump::SatDumpStartedEvent &)
     {
@@ -16,6 +25,18 @@ private:
                 misc_preview_text = global_cfg["gvar_extended"]["preview_misc_text"].get<std::string>();
             else
                 misc_preview_text = "SatDump | GVAR";
+
+            if (global_cfg["gvar_extended"].contains("temperature_points"))
+            {
+                points.clear();
+                for (int i = 0; i < (int)global_cfg["gvar_extended"]["temperature_points"].size(); i++)
+                {
+                    points.push_back({global_cfg["gvar_extended"]["temperature_points"][i]["x"].get<int>(),
+                                      global_cfg["gvar_extended"]["temperature_points"][i]["y"].get<int>(),
+                                      global_cfg["gvar_extended"]["temperature_points"][i]["radius"].get<int>()});
+                    names.push_back(global_cfg["gvar_extended"]["temperature_points"][i]["name"].get<std::string>());
+                }
+            }
         }
     }
 
@@ -113,6 +134,71 @@ private:
         }
 
         previewImage.save_png(std::string(evt.directory + "/preview.png").c_str());
+
+        //calibrated temperature measurement based on NOAA LUTs (https://www.ospo.noaa.gov/Operations/GOES/calibration/gvar-conversion.html)
+        if (evt.images.image1.width() == 5206 || evt.images.image1.width() == 5209)
+        {
+            std::string filename = "goes/gvar/goes" + std::to_string(evt.images.sat_number) + "_gvar_lut.txt";
+            if (resources::resourceExists(filename) && points.size() > 0)
+            {
+                std::ifstream input(resources::getResourcePath(filename).c_str());
+                std::array<std::array<float, 1024>, 4> LUTs = readLUTValues(input);
+                input.close();
+
+                std::ofstream output(evt.directory + "/temperatures.txt");
+                logger->info("Temperatures... temperatures.txt");
+                std::array<cimg_library::CImg<unsigned short>, 4> channels = {cropIR(evt.images.image1), cropIR(evt.images.image2), cropIR(evt.images.image3), cropIR(evt.images.image4)};
+                
+                for (int j = 0; j < (int)points.size(); j++)
+                {
+
+                    output << "Temperature measurements for point [" + std::to_string(points[j][0]) + ", " + std::to_string(points[j][1]) + "] (" + names[j] + ") with r = " + std::to_string(points[j][2]) << '\n'
+                           << '\n';
+
+                    logger->info("Temperature measurements for point [" + std::to_string(points[j][0]) + ", " + std::to_string(points[j][1]) + "] (" + names[j] + ") with r = " + std::to_string(points[j][2]));
+                    for (int i = 0; i < 4; i++)
+                    {
+                        output << "    Channel " + std::to_string(i + 2) + ":     " << FIXED_FLOAT(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6])
+                               << " K    (";
+                        if (LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15 < 10)
+                        {
+                            if (LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15 <= -10)
+                            {
+                                output << FIXED_FLOAT(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15);
+                            }
+                            else if (LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15 > 0)
+                            {
+                                output << "  " << FIXED_FLOAT(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15);
+                            }
+                            else
+                            {
+                                output << " " << FIXED_FLOAT(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15);
+                            }
+                        }
+                        else
+                        {
+                            output << " " << FIXED_FLOAT(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15);
+                        }
+                        output << " °C)";
+                        output << '\n';
+                        logger->info("channel " + std::to_string(i + 2) + ":     " +
+                                     std::to_string(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6]) +
+                                     " K    (" + std::to_string(LUTs[i][getAVG(channels[i], points[j][0], points[j][1], points[j][2]) >> 6] - 273.15) + " °C)");
+                    }
+                    output << '\n'
+                           << '\n';
+                }
+                output.close();
+            }
+            else
+            {
+                logger->warn("goes/gvar/goes" + std::to_string(evt.images.sat_number) + "_gvar_lut.txt LUT is missing! Temperature measurement will not be performed.");
+            }
+        }
+        else
+        {
+            logger->info("Image is not a FD, temperature measurement will not be performed.");
+        }
     }
 
     static void gvarSaveFalceColorHandler(const goes::gvar::events::GVARSaveFCImageEvent &evt)
@@ -127,6 +213,63 @@ private:
                 crop.crop(1348, 240, 1348 + 5928, 240 + 4120);
             crop.save_png(std::string(evt.directory + "/europe.png").c_str());
         }
+    }
+
+    static std::array<std::array<float, 1024>, 4> readLUTValues(std::ifstream &LUT)
+    {
+        std::array<std::array<float, 1024>, 4> values;
+        std::string tmp;
+        //skip first 7 lines
+        for (int i = 0; i < 7; i++)
+        {
+            std::getline(LUT, tmp);
+        }
+        //read LUTs
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 1024; j++)
+            {
+                std::getline(LUT, tmp);
+                values[i][j] = std::stof(tmp.substr(39, 7));
+            }
+            if (i != 3)
+            {
+                //skip det2 for first 3 channels (no det2 for ch6)
+                for (int j = 0; j < 1030; j++)
+                {
+                    std::getline(LUT, tmp);
+                }
+            }
+        }
+        return values;
+    }
+
+    static unsigned short getAVG(cimg_library::CImg<unsigned short> &image, int x, int y, int r)
+    {
+        uint64_t sum = 0;
+        for (int i = 0; i < std::pow(r * 2 + 1, 2); i++)
+        {
+            sum += *(image.data(x - r + i % (2 * r + 1), y - r + i / (2 * r + 1), 0, 0));
+        }
+        return sum / std::pow(r * 2 + 1, 2);
+    }
+
+    static cimg_library::CImg<unsigned short> cropIR(cimg_library::CImg<unsigned short> input)
+    {
+        cimg_library::CImg<unsigned short> output(4749, input.height(), 1, 1);
+        if (input.width() == 5206)
+        {
+            output.draw_image(0, 0, 0, 0, input);
+        }
+        else if (input.width() == 5209)
+        {
+            output.draw_image(-463, 0, 0, 0, input);
+        }
+        else
+        {
+            logger->warn("Wrong IR image size (" + std::to_string(input.width()) + "), it will not be cropped");
+        }
+        return output;
     }
 
 public:
@@ -144,5 +287,7 @@ public:
 };
 
 std::string GVARExtended::misc_preview_text = "SatDump | GVAR";
+std::vector<std::array<int, 3>> GVARExtended::points = {{}};
+std::vector<std::string> GVARExtended::names = {};
 
 PLUGIN_LOADER(GVARExtended)
