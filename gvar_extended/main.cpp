@@ -46,8 +46,6 @@ private:
 
     static void gvarSaveChannelImagesHandler(const goes::gvar::events::GVARSaveChannelImagesEvent &evt)
     {
-        logger->info("cropping test");
-        cropVIS(evt.images.image5).save_png(std::string(evt.directory + "/vis_crop.png").c_str());
         logger->info("Preview... preview.png");
         cimg_library::CImg<unsigned char> preview(1300, 948, 1, 1);
         cimg_library::CImg<unsigned char> previewImage;
@@ -206,9 +204,12 @@ private:
             logger->info("Image is not a FD, temperature measurement will not be performed.");
         }
 
-        //cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image2);
-        //drawIRMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj);
-        //mapProj.save_png(std::string(evt.directory + "/maptest.png").c_str());
+        //mapped crops of europe. IR and VIS
+        cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image2);
+        drawIRMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj);
+        cimg_library::CImg<unsigned short> crop(1560, 890, 1, 1);
+        crop.draw_image(-500, -50, 0, 0, mapProj);
+        crop.save_png(std::string(evt.directory + "/europe_IR.png").c_str());
     }
 
     static void gvarSaveFalceColorHandler(const goes::gvar::events::GVARSaveFCImageEvent &evt)
