@@ -324,7 +324,7 @@ private:
     }
 
     // Expect cropped IR
-    static void drawIRMapOverlay(int number, time_t time, cimg_library::CImg<unsigned short> &image)
+    static void drawMapOverlay(int number, time_t time, cimg_library::CImg<unsigned short> &image, bool vis_mode = false)
     {
         predict_position goes_position = getSatellitePosition(number, time);
         projection::GEOSProjection pj(goes_position.altitude * 1000, goes_position.longitude * 57.29578, true);
@@ -334,7 +334,7 @@ private:
         map::drawProjectedMap(image,
                               {resources::getResourcePath("maps/ne_10m_admin_0_countries.json")},
                               color,
-                              [&pj](float lat, float lon, int height, int width) -> std::pair<int, int>
+                              [&pj, &vis_mode](float lat, float lon, int height, int width) -> std::pair<int, int>
                               {
                                   double x, y;
                                   pj.forward(lon, lat, x, y);
@@ -350,7 +350,7 @@ private:
 
                                   image_x += width / 2.0;
                                   image_y += height / 2.0;
-                                  image_y -= 11;
+                                  image_y -= vis_mode ? 53 : 11;
 
                                   return {image_x, (height - 1) - image_y};
                               });
