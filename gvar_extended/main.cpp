@@ -6,8 +6,11 @@
 #include <fstream>
 #include <vector>
 #include <iomanip>
-
+#include "common/predict/predict.h"
 #include "modules/goes/gvar/module_gvar_image_decoder.h"
+#include "tle.h"
+#include "common/projection/geos.h"
+#include "common/map/map_drawer.h"
 
 #define FIXED_FLOAT(x) std::fixed << std::setprecision(3) << (x)
 
@@ -151,7 +154,7 @@ private:
                 std::ofstream output(evt.directory + "/temperatures.txt");
                 logger->info("Temperatures... temperatures.txt");
                 std::array<cimg_library::CImg<unsigned short>, 4> channels = {cropIR(evt.images.image1), cropIR(evt.images.image2), cropIR(evt.images.image3), cropIR(evt.images.image4)};
-                
+
                 for (int j = 0; j < (int)points.size(); j++)
                 {
 
@@ -202,6 +205,10 @@ private:
         {
             logger->info("Image is not a FD, temperature measurement will not be performed.");
         }
+
+        //cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image2);
+        //drawIRMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj);
+        //mapProj.save_png(std::string(evt.directory + "/maptest.png").c_str());
     }
 
     static void gvarSaveFalceColorHandler(const goes::gvar::events::GVARSaveFCImageEvent &evt)
@@ -275,7 +282,7 @@ private:
         return output;
     }
 
-        static cimg_library::CImg<unsigned short> cropVIS(cimg_library::CImg<unsigned short> input)
+    static cimg_library::CImg<unsigned short> cropVIS(cimg_library::CImg<unsigned short> input)
     {
         cimg_library::CImg<unsigned short> output(18990, input.height(), 1, 1);
         if (input.width() == 20824)
@@ -291,6 +298,61 @@ private:
             logger->warn("Wrong VIS image size (" + std::to_string(input.width()) + "), it will not be cropped");
         }
         return output;
+    }
+
+    static int getNORADFromSatNumber(int number)
+    {
+        if (number == 13)
+            return 29155;
+        else if (number == 14)
+            return 35491;
+        else if (number == 15)
+            return 36411;
+        else
+            return 0;
+    };
+
+    static predict_position getSatellitePosition(int number, time_t time)
+    {
+        tle::TLE goes_tle = tle::getTLEfromNORAD(getNORADFromSatNumber(number));
+        predict_orbital_elements_t *goes_object = predict_parse_tle(goes_tle.line1.c_str(), goes_tle.line2.c_str());
+        predict_position goes_position;
+        predict_orbit(goes_object, &goes_position, predict_to_julian(time));
+        predict_destroy_orbital_elements(goes_object);
+        return goes_position;
+    }
+
+    // Expect cropped IR
+    static void drawIRMapOverlay(int number, time_t time, cimg_library::CImg<unsigned short> &image)
+    {
+        predict_position goes_position = getSatellitePosition(number, time);
+        projection::GEOSProjection pj(goes_position.altitude * 1000, goes_position.longitude * 57.29578, true);
+
+        unsigned short color[3] = {65535, 65535, 65535};
+
+        map::drawProjectedMap(image,
+                              {resources::getResourcePath("maps/ne_10m_admin_0_countries.json")},
+                              color,
+                              [&pj](float lat, float lon, int height, int width) -> std::pair<int, int>
+                              {
+                                  double x, y;
+                                  pj.forward(lon, lat, x, y);
+
+                                  if (fabs(x) > 1e10f || fabs(y) > 1e10f)
+                                      return {-1, -1};
+
+                                  float hscale = 1.1765;
+                                  float vscale = 1.1765;
+
+                                  int image_x = x * hscale * (width / 2.0);
+                                  int image_y = y * vscale * (height / 2.0);
+
+                                  image_x += width / 2.0;
+                                  image_y += height / 2.0;
+                                  image_y -= 11;
+
+                                  return {image_x, (height - 1) - image_y};
+                              });
     }
 
 public:
