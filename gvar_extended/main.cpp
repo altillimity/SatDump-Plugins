@@ -2,11 +2,12 @@
 #include "logger.h"
 #include "settings.h"
 #include "resources.h"
-#include "modules/goes/gvar/module_gvar_image_decoder.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <iomanip>
+
+#include "modules/goes/gvar/module_gvar_image_decoder.h"
 
 #define FIXED_FLOAT(x) std::fixed << std::setprecision(3) << (x)
 
