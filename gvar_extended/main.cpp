@@ -205,11 +205,19 @@ private:
         }
 
         //mapped crops of europe. IR and VIS
-        cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image2);
-        drawIRMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj);
-        cimg_library::CImg<unsigned short> crop(1560, 890, 1, 1);
-        crop.draw_image(-500, -50, 0, 0, mapProj);
-        crop.save_png(std::string(evt.directory + "/europe_IR.png").c_str());
+        cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image3);
+        drawMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj, false);
+        mapProj.crop(500, 50, 500 + 1560, 50+ 890);
+        logger->info("Europe IR crop.. europe_IR.png");
+        mapProj.save_png(std::string(evt.directory + "/europe_IR.png").c_str());
+        mapProj.clear();
+
+        mapProj = cropVIS(evt.images.image5);
+        drawMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj, true);
+        mapProj.crop(1348, 240, 1348 + 5928, 240 + 4120);
+        logger->info("Europe VIS crop.. europe_VIS.png");
+        mapProj.save_png(std::string(evt.directory + "/europe_VIS.png").c_str());
+        mapProj.clear();
     }
 
     static void gvarSaveFalceColorHandler(const goes::gvar::events::GVARSaveFCImageEvent &evt)
