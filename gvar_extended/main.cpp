@@ -207,7 +207,7 @@ private:
         //mapped crops of europe. IR and VIS
         cimg_library::CImg<unsigned short> mapProj = cropIR(evt.images.image3);
         drawMapOverlay(evt.images.sat_number, evt.timeUTC, mapProj, false);
-        mapProj.crop(500, 50, 500 + 1560, 50+ 890);
+        mapProj.crop(500, 50, 500 + 1560, 50 + 890);
         logger->info("Europe IR crop.. europe_IR.png");
         mapProj.save_png(std::string(evt.directory + "/europe_IR.png").c_str());
         mapProj.clear();
@@ -331,36 +331,67 @@ private:
         return goes_position;
     }
 
+    class GVARProjector
+    {
+    private:
+        projection::GEOSProjection pj;
+        int height, width;
+
+        double x, y;
+        int image_x, image_y;
+
+        const float hscale = 1.1765;
+        const float vscale = 1.1765;
+
+    public:
+        GVARProjector(int number, time_t time, int img_width, int img_height)
+        {
+            height = img_height;
+            width = img_width;
+
+            predict_position goes_position = getSatellitePosition(number, time);
+            pj.init(goes_position.altitude * 1000, goes_position.longitude * 57.29578, true);
+        }
+
+        void latLonToPixelPos(double lon, double lat, int &img_x, int &img_y, bool vis_mode = false)
+        {
+            pj.forward(lon, lat, x, y);
+
+            if (fabs(x) > 1e10f || fabs(y) > 1e10f)
+            {
+                // Error / out of the image
+                img_x = -1;
+                img_y = -1;
+                return;
+            }
+
+            image_x = x * hscale * (width / 2.0);
+            image_y = y * vscale * (height / 2.0);
+
+            image_x += width / 2.0;
+            image_y += height / 2.0;
+            image_y -= vis_mode ? 53 : 11;
+
+            img_x = image_x;
+            img_y = (height - 1) - image_y;
+        }
+    };
+
     // Expect cropped IR
     static void drawMapOverlay(int number, time_t time, cimg_library::CImg<unsigned short> &image, bool vis_mode = false)
     {
-        predict_position goes_position = getSatellitePosition(number, time);
-        projection::GEOSProjection pj(goes_position.altitude * 1000, goes_position.longitude * 57.29578, true);
+        GVARProjector gvar_proj(number, time, image.width(), image.height());
 
         unsigned short color[3] = {65535, 65535, 65535};
 
         map::drawProjectedMap(image,
                               {resources::getResourcePath("maps/ne_10m_admin_0_countries.json")},
                               color,
-                              [&pj, &vis_mode](float lat, float lon, int height, int width) -> std::pair<int, int>
+                              [&gvar_proj, &vis_mode](float lat, float lon, int height, int width) -> std::pair<int, int>
                               {
-                                  double x, y;
-                                  pj.forward(lon, lat, x, y);
-
-                                  if (fabs(x) > 1e10f || fabs(y) > 1e10f)
-                                      return {-1, -1};
-
-                                  float hscale = 1.1765;
-                                  float vscale = 1.1765;
-
-                                  int image_x = x * hscale * (width / 2.0);
-                                  int image_y = y * vscale * (height / 2.0);
-
-                                  image_x += width / 2.0;
-                                  image_y += height / 2.0;
-                                  image_y -= vis_mode ? 53 : 11;
-
-                                  return {image_x, (height - 1) - image_y};
+                                  int image_x, image_y;
+                                  gvar_proj.latLonToPixelPos(lon, lat, image_x, image_y, vis_mode);
+                                  return {image_x, image_y};
                               });
     }
 
